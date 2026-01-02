@@ -46,25 +46,58 @@ function filterRowPatterns(knownRow, clue) {
   })
 }
 
+// --- CORRECCIÓN MATEMÁTICA AQUÍ ---
 function hasPointsLeft(gridLine, clue) {
   const sumTarget = parseClueValue(clue.sum)
+  const voltorbTarget = parseClueValue(clue.voltorbs)
+  
+  // Si falta información crítica, asumimos que AÚN quedan puntos para no cerrar el nivel antes de tiempo
   if (sumTarget === null) return true 
 
   let currentSum = 0
+  let currentVoltorbs = 0
   let unknownCount = 0
   
   for (const cell of gridLine) {
     if (typeof cell === 'number') currentSum += cell
+    else if (cell === 'voltorb') currentVoltorbs += 1
     else if (cell === 'unknown') unknownCount++
   }
 
   const remainingSum = sumTarget - currentSum
-  return remainingSum > unknownCount
+  
+  // Calculamos cuántos Voltorbs quedan por encontrar en esta fila
+  // Si no puso pista de voltorbs, asumimos 0 para ser conservadores, 
+  // pero lo ideal es que si falta el dato, no podemos asegurar que el nivel acabó.
+  let remainingVoltorbs = 0
+  if (voltorbTarget !== null) {
+      remainingVoltorbs = Math.max(0, voltorbTarget - currentVoltorbs)
+  }
+
+  // Las casillas que REALMENTE pueden tener puntos son: (Huecos - Voltorbs esperados)
+  const valueSlots = Math.max(0, unknownCount - remainingVoltorbs)
+
+  // Si la suma que falta es mayor que los huecos para valores,
+  // significa que el promedio es > 1. Es decir, hay al menos un 2 o un 3.
+  return remainingSum > valueSlots
 }
 
 function evaluateBoards(grid, rowClues, colClues) {
   const colSumTargets = colClues.map((clue) => parseClueValue(clue.sum))
   const colVoltorbTargets = colClues.map((clue) => parseClueValue(clue.voltorbs))
+  const allCluesEntered = [...rowClues, ...colClues].every(
+    (clue) => parseClueValue(clue.sum) !== null && parseClueValue(clue.voltorbs) !== null
+  )
+
+  if (!allCluesEntered) {
+    return {
+      solutionCount: 0,
+      stats: null,
+      recommended: [],
+      issues: ['Please fill in all 10 row and column clues to start calculation.'],
+      isLevelComplete: false
+    }
+  }
   
   let potentialPointsRemaining = false
   let validCluesFound = false
@@ -94,72 +127,45 @@ function evaluateBoards(grid, rowClues, colClues) {
 
   const isLevelComplete = validCluesFound && !potentialPointsRemaining
 
-  const zeroHintSafeTiles = []
+  // --- SOLVER ---
   
+  // Nota: Aunque detectemos "Zero Hint", seguimos calculando probabilidades
+  // para poder marcar los Voltorbs 100% seguros en otras filas.
+  
+  const zeroHintSafeTiles = []
+  // Revisión rápida de pistas 0 para priorizarlas en 'recommended'
   rowClues.forEach((clue, r) => {
-    if (parseClueValue(clue.voltorbs) === 0) {
-      if (hasPointsLeft(grid[r], clue)) {
-        for (let c = 0; c < GRID_SIZE; c++) {
-          if (grid[r][c] === 'unknown') {
-            if (!zeroHintSafeTiles.some(t => t.row === r && t.col === c)) {
-               zeroHintSafeTiles.push({ row: r, col: c })
-            }
-          }
-        }
+    if (parseClueValue(clue.voltorbs) === 0 && hasPointsLeft(grid[r], clue)) {
+      for (let c = 0; c < GRID_SIZE; c++) {
+        if (grid[r][c] === 'unknown' && !zeroHintSafeTiles.some(t => t.row === r && t.col === c)) 
+           zeroHintSafeTiles.push({ row: r, col: c })
       }
     }
   })
-
   colClues.forEach((clue, c) => {
     if (parseClueValue(clue.voltorbs) === 0) {
       const colCells = grid.map(row => row[c])
       if (hasPointsLeft(colCells, clue)) {
         for (let r = 0; r < GRID_SIZE; r++) {
-          if (grid[r][c] === 'unknown') {
-            if (!zeroHintSafeTiles.some(t => t.row === r && t.col === c)) {
-              zeroHintSafeTiles.push({ row: r, col: c })
-            }
-          }
+          if (grid[r][c] === 'unknown' && !zeroHintSafeTiles.some(t => t.row === r && t.col === c))
+            zeroHintSafeTiles.push({ row: r, col: c })
         }
       }
     }
   })
-
-  if (zeroHintSafeTiles.length > 0) {
-    return {
-      solutionCount: 'N/A',
-      stats: null,
-      recommended: zeroHintSafeTiles,
-      issues: [],
-      mode: 'certainty',
-      isLevelComplete
-    }
-  }
 
   const hasAnyClue = [...rowClues, ...colClues].some(
     (clue) => parseClueValue(clue.sum) !== null || parseClueValue(clue.voltorbs) !== null
   )
 
   if (!hasAnyClue) {
-    return {
-      solutionCount: 0,
-      stats: null,
-      recommended: [],
-      issues: ['Add at least one row or column hint to begin.'],
-      isLevelComplete: false
-    }
+    return { solutionCount: 0, stats: null, recommended: [], issues: ['Add clues to start.'], isLevelComplete: false }
   }
 
   const rowOptions = rowClues.map((clue, rowIndex) => filterRowPatterns(grid[rowIndex], clue))
   
   if (rowOptions.some((options) => options.length === 0)) {
-    return {
-      solutionCount: 0,
-      stats: null,
-      recommended: [],
-      issues: ['No boards match the provided hints and revealed tiles. Check for typos.'],
-      isLevelComplete: false
-    }
+    return { solutionCount: 0, stats: null, recommended: [], issues: ['Invalid board configuration.'], isLevelComplete: false }
   }
 
   const stats = Array.from({ length: GRID_SIZE }, () =>
@@ -218,13 +224,7 @@ function evaluateBoards(grid, rowClues, colClues) {
   backtrack(0, [], Array(GRID_SIZE).fill(0), Array(GRID_SIZE).fill(0))
 
   if (solutionCount === 0) {
-    return {
-      solutionCount,
-      stats: null,
-      recommended: [],
-      issues: ['No logic solution found. Please check your inputs for errors.'],
-      isLevelComplete: false
-    }
+    return { solutionCount, stats: null, recommended: [], issues: ['No solution found.'], isLevelComplete: false }
   }
 
   const probabilities = stats.map((row) =>
@@ -234,46 +234,55 @@ function evaluateBoards(grid, rowClues, colClues) {
     }))
   )
 
-  let minRisk = 1.1
-  probabilities.forEach((row, r) => {
-    row.forEach((cell, c) => {
-      if (grid[r][c] === 'unknown') {
-        const risk = Math.round(cell.voltorbProbability * 10000) / 10000
-        if (risk < minRisk) minRisk = risk
-      }
-    })
-  })
+  // Si tenemos 'zeroHintSafeTiles', esas tienen prioridad absoluta para RECOMENDACIÓN
+  // pero aún así devolvemos stats completas para pintar Voltorbs 100%
+  let recommended = []
+  let mode = 'probabilistic'
 
-  const recommended = []
-  probabilities.forEach((row, r) => {
-    row.forEach((cell, c) => {
-      if (grid[r][c] === 'unknown') {
-         const risk = Math.round(cell.voltorbProbability * 10000) / 10000
-         if (risk === minRisk) {
-            const rowUseful = hasPointsLeft(grid[r], rowClues[r])
-            const colCells = grid.map(rw => rw[c])
-            const colUseful = hasPointsLeft(colCells, colClues[c])
-            
-            if (rowUseful || colUseful) {
-                recommended.push({ row: r, col: c })
-            }
-         }
-      }
-    })
-  })
+  if (zeroHintSafeTiles.length > 0) {
+      recommended = zeroHintSafeTiles
+      mode = 'certainty'
+  } else {
+      let minRisk = 1.1
+      probabilities.forEach((row, r) => {
+        row.forEach((cell, c) => {
+          if (grid[r][c] === 'unknown') {
+            const risk = Math.round(cell.voltorbProbability * 10000) / 10000
+            if (risk < minRisk) minRisk = risk
+          }
+        })
+      })
 
-  const issues = []
-  if (truncated) {
-    issues.push('Calculation simplified due to complexity. Probabilities are approximate.')
+      probabilities.forEach((row, r) => {
+        row.forEach((cell, c) => {
+          if (grid[r][c] === 'unknown') {
+             const risk = Math.round(cell.voltorbProbability * 10000) / 10000
+             if (risk === minRisk) {
+                const rowUseful = hasPointsLeft(grid[r], rowClues[r])
+                const colCells = grid.map(rw => rw[c])
+                const colUseful = hasPointsLeft(colCells, colClues[c])
+                if (rowUseful || colUseful) {
+                    recommended.push({ row: r, col: c })
+                }
+             }
+          }
+        })
+      })
   }
 
-  return { solutionCount, stats: probabilities, recommended, issues, mode: 'probabilistic', isLevelComplete }
+  const issues = []
+  if (truncated) issues.push('Complex board. Calculation approximated.')
+
+  return { solutionCount, stats: probabilities, recommended, issues, mode, isLevelComplete }
 }
 
-function Tile({ value, tone, riskLabel, evLabel, isOpen, onOpen, onSelect, menuPosition }) {
+function Tile({ value, tone, riskLabel, evLabel, isOpen, onOpen, onSelect, menuPosition, isDetectedVoltorb }) {
+  // Si es un voltorb detectado, forzamos la apariencia visual
+  const showVoltorb = value === 'voltorb' || isDetectedVoltorb
+
   return (
     <div
-      className={`cell ${tone} ${isOpen ? 'is-open' : ''}`}
+      className={`cell ${tone} ${isOpen ? 'is-open' : ''} ${isDetectedVoltorb ? 'detected-voltorb' : ''}`}
       onClick={(e) => {
         e.stopPropagation()
         onOpen()
@@ -288,19 +297,28 @@ function Tile({ value, tone, riskLabel, evLabel, isOpen, onOpen, onSelect, menuP
       }}
     >
       <div className="cell-label">
-        {value === 'voltorb' ? <img src="/voltorb.png" alt="Voltorb" className="voltorb-sprite" /> : value === 'unknown' ? '?' : value}
+        {showVoltorb ? (
+            <img src="/voltorb.png" alt="Voltorb" className="voltorb-sprite" />
+        ) : value === 'unknown' ? '?' : value}
       </div>
       
-      {value === 'unknown' && riskLabel && (
+      {/* Ocultamos el label de riesgo si ya sabemos que es Voltorb */}
+      {value === 'unknown' && !isDetectedVoltorb && riskLabel && (
         <div className="cell-meta">
           <span>{riskLabel}</span>
           {evLabel && <span>{evLabel}</span>}
         </div>
       )}
 
+      {/* Label especial para detectados */}
+      {isDetectedVoltorb && value === 'unknown' && (
+        <div className="cell-meta danger-text">
+          100% VOLTORB
+        </div>
+      )}
+
       {isOpen && (
         <div
-          /* AQUI EL CAMBIO: Añadimos la clase de posición dinámica */
           className={`cell-menu menu-${menuPosition}`}
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
@@ -414,11 +432,17 @@ function App() {
                       const expected = stats ? stats.expectedValue.toFixed(2) : null
                       const riskPercent = riskProb !== null ? Math.round(riskProb * 100) : null
 
+                      // DETECCIÓN DE CERTEZA 100%
+                      // Si la probabilidad es 1 (o muy cercana por flotantes), es un Voltorb seguro.
+                      const isDetectedVoltorb = riskProb !== null && riskProb > 0.999
+
                       let tone = 'neutral'
                       let riskLabel = null
                       
                       if (value === 'unknown') {
-                        if (isRecommended) {
+                        if (isDetectedVoltorb) {
+                           tone = 'certain' // Usamos el tono rojo directamente
+                        } else if (isRecommended) {
                           tone = 'safe'
                           riskLabel = (results.mode === 'certainty' || riskPercent === 0) ? '0% Risk' : `${riskPercent}% Risk`
                         } else if (riskPercent !== null) {
@@ -429,10 +453,6 @@ function App() {
                         tone = 'certain'
                       }
 
-                      // LOGICA DE POSICIONAMIENTO DEL MENU
-                      // Filas 0 y 1: Menú hacia abajo (bottom)
-                      // Filas 3 y 4: Menú hacia arriba (top)
-                      // Fila 2: Centrado (center)
                       let menuPosition = 'center'
                       if (r <= 1) menuPosition = 'bottom'
                       if (r >= 3) menuPosition = 'top'
@@ -443,11 +463,12 @@ function App() {
                           value={value}
                           tone={tone}
                           riskLabel={riskLabel}
-                          evLabel={value === 'unknown' && expected ? `EV ${expected}` : null}
+                          evLabel={value === 'unknown' && !isDetectedVoltorb && expected ? `EV ${expected}` : null}
                           isOpen={openCell?.row === r && openCell?.col === c}
                           onOpen={() => setOpenCell({ row: r, col: c })}
                           onSelect={(val) => handleSelect(r, c, val)}
                           menuPosition={menuPosition}
+                          isDetectedVoltorb={isDetectedVoltorb}
                         />
                       )
                     })}

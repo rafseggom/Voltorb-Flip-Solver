@@ -137,7 +137,15 @@ button { font-family: inherit; }
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-.recommended-pill { background: rgba(67, 216, 155, 0.15); color: #43d89b; border: 1px solid rgba(67, 216, 155, 0.3); }
+
+/* --- CAMBIO: Color dorado para Recommended/Safe --- */
+.recommended-pill { 
+  background: rgba(255, 215, 0, 0.15); 
+  color: #ffd700; 
+  border: 1px solid rgba(255, 215, 0, 0.4); 
+}
+/* ------------------------------------------------ */
+
 .risk-pill { background: rgba(242, 166, 90, 0.15); color: #f2a65a; border: 1px solid rgba(242, 166, 90, 0.3); }
 .voltorb-pill { background: rgba(243, 114, 127, 0.15); color: #f3727f; border: 1px solid rgba(243, 114, 127, 0.3); gap: 6px; }
 .voltorb-pill img { width: 14px; height: 14px; object-fit: contain; }
@@ -196,11 +204,32 @@ button { font-family: inherit; }
   transform: none !important;
 }
 
+/* --- CAMBIO: ESTILO DORADO CON ANIMACIÓN --- */
 .cell.safe { 
-  border-color: rgba(67, 216, 155, 0.9); 
-  box-shadow: 0 0 25px rgba(67, 216, 155, 0.2); 
-  background: rgba(67, 216, 155, 0.1); 
+  border-color: rgba(255, 215, 0, 0.8); 
+  background: rgba(255, 215, 0, 0.12);
+  /* Sombra inicial dorada */
+  box-shadow: 0 0 25px rgba(255, 215, 0, 0.25);
+  /* Animación de latido */
+  animation: safePulse 2s infinite ease-in-out;
 }
+
+@keyframes safePulse {
+  0% {
+    box-shadow: 0 0 20px rgba(255, 215, 0, 0.2);
+    border-color: rgba(255, 215, 0, 0.6);
+  }
+  50% {
+    box-shadow: 0 0 45px rgba(255, 215, 0, 0.5); /* Brillo intenso */
+    border-color: rgba(255, 215, 0, 1);
+  }
+  100% {
+    box-shadow: 0 0 20px rgba(255, 215, 0, 0.2);
+    border-color: rgba(255, 215, 0, 0.6);
+  }
+}
+/* ------------------------------------------ */
+
 .cell.warning { border-color: rgba(242, 166, 90, 0.9); }
 .cell.certain { 
   border-color: rgba(243, 114, 127, 0.9); 
@@ -215,7 +244,7 @@ button { font-family: inherit; }
 }
 .cell-meta { display: flex; flex-direction: column; gap: 2px; color: #9fb3d9; font-size: 11px; font-weight: 600; }
 
-/* --- NUEVO: MENU DESPLEGABLE INTELIGENTE --- */
+/* MENU DESPLEGABLE INTELIGENTE */
 .cell-menu {
   position: absolute;
   width: 180px;
@@ -226,28 +255,12 @@ button { font-family: inherit; }
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.8);
   z-index: 1000;
   cursor: default;
-  /* La posición por defecto se define en las subclases */
   left: 50%; 
 }
 
-/* Posición: CENTRO (Por defecto o filas centrales) */
-.cell-menu.menu-center {
-  top: 50%;
-  transform: translate(-50%, -50%);
-}
-
-/* Posición: ABAJO (Para filas superiores) */
-.cell-menu.menu-bottom {
-  top: 100%; /* Empieza justo debajo de la celda */
-  transform: translate(-50%, 10px); /* Centrado horizontal, 10px de margen vertical */
-}
-
-/* Posición: ARRIBA (Para filas inferiores) */
-.cell-menu.menu-top {
-  bottom: 100%; /* Termina justo encima de la celda */
-  transform: translate(-50%, -10px); /* Centrado horizontal, -10px de margen vertical */
-}
-/* ------------------------------------------- */
+.cell-menu.menu-center { top: 50%; transform: translate(-50%, -50%); }
+.cell-menu.menu-bottom { top: 100%; transform: translate(-50%, 10px); }
+.cell-menu.menu-top { bottom: 100%; transform: translate(-50%, -10px); }
 
 .cell-menu-title { margin: 0 0 8px; font-size: 11px; color: #bcd2ff; text-align: center; font-family: 'Press Start 2P'; }
 .cell-menu-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
@@ -317,7 +330,7 @@ button { font-family: inherit; }
 .guide li { margin-bottom: 8px; }
 
 .advice { font-size: 14px; margin: 0; color: #cfd7e5; }
-.advice.highlight { color: #43d89b; }
+.advice.highlight { color: #ffd700; /* Texto dorado también en la guía */ }
 .voltorb-sprite { width: 28px; height: 28px; image-rendering: pixelated; }
 
 /* LEVEL COMPLETE */
@@ -349,4 +362,24 @@ button { font-family: inherit; }
 @media (max-width: 960px) {
   .hero { flex-direction: column; }
   .hero-actions { align-items: flex-start; }
+}
+
+.cell.detected-voltorb {
+  border-color: rgba(243, 114, 127, 0.9); 
+  background: rgba(243, 114, 127, 0.2); 
+  animation: pulseDanger 2s infinite;
+}
+
+.danger-text {
+  color: #f3727f;
+  font-weight: 800;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  margin-top: 4px;
+}
+
+@keyframes pulseDanger {
+  0% { box-shadow: 0 0 0 0 rgba(243, 114, 127, 0.2); }
+  70% { box-shadow: 0 0 0 10px rgba(243, 114, 127, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(243, 114, 127, 0); }
 }
