@@ -1,15 +1,14 @@
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import './App.css'
 
 const GRID_SIZE = 5
-const CYCLE_ORDER = ['unknown', 1, 2, 3, 'voltorb']
+const MAX_VISITED = 200000 
 
 const ALL_ROW_PATTERNS = buildRowPatterns()
 
 function buildRowPatterns() {
   const values = [1, 2, 3, 'voltorb']
   const patterns = []
-
   const dfs = (current) => {
     if (current.length === GRID_SIZE) {
       const sum = current.reduce((acc, cell) => acc + (cell === 'voltorb' ? 0 : cell), 0)
@@ -19,20 +18,15 @@ function buildRowPatterns() {
     }
     values.forEach((value) => dfs([...current, value]))
   }
-
   dfs([])
   return patterns
 }
 
 function parseClueValue(value) {
   if (value === '' || value === null || value === undefined) return null
-  const numeric = Number(value)
-  return Number.isFinite(numeric) ? numeric : null
-}
-
-function getNextState(current) {
-  const index = CYCLE_ORDER.indexOf(current)
-  return CYCLE_ORDER[(index + 1) % CYCLE_ORDER.length]
+  const numeric = parseInt(value, 10)
+  if (!Number.isFinite(numeric) || numeric < 0) return null
+  return numeric
 }
 
 function filterRowPatterns(knownRow, clue) {
@@ -42,7 +36,6 @@ function filterRowPatterns(knownRow, clue) {
   return ALL_ROW_PATTERNS.filter(({ cells, sum, voltorbs }) => {
     if (sumTarget !== null && sum !== sumTarget) return false
     if (voltorbTarget !== null && voltorbs !== voltorbTarget) return false
-
     for (let i = 0; i < GRID_SIZE; i += 1) {
       const known = knownRow[i]
       if (known === 'unknown') continue
@@ -53,107 +46,200 @@ function filterRowPatterns(knownRow, clue) {
   })
 }
 
+function hasPointsLeft(gridLine, clue) {
+  const sumTarget = parseClueValue(clue.sum)
+  if (sumTarget === null) return true 
+
+  let currentSum = 0
+  let unknownCount = 0
+  
+  for (const cell of gridLine) {
+    if (typeof cell === 'number') currentSum += cell
+    else if (cell === 'unknown') unknownCount++
+  }
+
+  const remainingSum = sumTarget - currentSum
+  return remainingSum > unknownCount
+}
+
 function evaluateBoards(grid, rowClues, colClues) {
-  const hasAnyClue = [...rowClues, ...colClues].some(
-    (clue) => parseClueValue(clue.sum) !== null || parseClueValue(clue.voltorbs) !== null
-  )
-  if (!hasAnyClue) {
-    return {
-      solutions: [],
-      stats: null,
-      recommended: [],
-      issues: ['Add at least one row or column clue to start.'],
-    }
-  }
-
-  const rowOptions = rowClues.map((clue, rowIndex) => filterRowPatterns(grid[rowIndex], clue))
-
-  // Early exit if any row has no compatible patterns
-  if (rowOptions.some((options) => options.length === 0)) {
-    return { solutions: [], stats: null, recommended: [], issues: ['No valid boards match at least one row clue.'] }
-  }
-
   const colSumTargets = colClues.map((clue) => parseClueValue(clue.sum))
   const colVoltorbTargets = colClues.map((clue) => parseClueValue(clue.voltorbs))
+  
+  let potentialPointsRemaining = false
+  let validCluesFound = false
 
-  const solutions = []
-
-  const backtrack = (rowIndex, board, colSums, colVoltorbs) => {
-    if (rowIndex === GRID_SIZE) {
-      // Final column validation
-      for (let col = 0; col < GRID_SIZE; col += 1) {
-        const targetSum = colSumTargets[col]
-        const targetVolts = colVoltorbTargets[col]
-        if (targetSum !== null && colSums[col] !== targetSum) return
-        if (targetVolts !== null && colVoltorbs[col] !== targetVolts) return
+  for (let r = 0; r < GRID_SIZE; r++) {
+    if (parseClueValue(rowClues[r].sum) !== null) {
+      validCluesFound = true
+      if (hasPointsLeft(grid[r], rowClues[r])) {
+        potentialPointsRemaining = true
+        break
       }
-      solutions.push(board.map((row) => [...row]))
-      return
-    }
-
-    for (const pattern of rowOptions[rowIndex]) {
-      const nextBoard = [...board, pattern.cells]
-      const nextSums = colSums.slice()
-      const nextVolts = colVoltorbs.slice()
-
-      let violates = false
-      for (let col = 0; col < GRID_SIZE; col += 1) {
-        const value = pattern.cells[col]
-        nextSums[col] += value === 'voltorb' ? 0 : value
-        nextVolts[col] += value === 'voltorb' ? 1 : 0
-
-        const sumTarget = colSumTargets[col]
-        const voltsTarget = colVoltorbTargets[col]
-        if (sumTarget !== null && nextSums[col] > sumTarget) {
-          violates = true
-          break
-        }
-        if (voltsTarget !== null && nextVolts[col] > voltsTarget) {
-          violates = true
-          break
-        }
-      }
-
-      if (violates) continue
-      backtrack(rowIndex + 1, nextBoard, nextSums, nextVolts)
     }
   }
 
-  backtrack(0, [], Array(GRID_SIZE).fill(0), Array(GRID_SIZE).fill(0))
-
-  if (solutions.length === 0) {
-    return { solutions, stats: null, recommended: [], issues: ['No boards satisfy both row and column clues. Try adjusting your inputs.'] }
+  if (!potentialPointsRemaining) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      if (parseClueValue(colClues[c].sum) !== null) {
+        validCluesFound = true
+        const colCells = grid.map(row => row[c])
+        if (hasPointsLeft(colCells, colClues[c])) {
+          potentialPointsRemaining = true
+          break
+        }
+      }
+    }
   }
 
-  const stats = Array.from({ length: GRID_SIZE }, () =>
-    Array.from({ length: GRID_SIZE }, () => ({ voltorbCount: 0, total: solutions.length, sumValues: 0 }))
-  )
+  const isLevelComplete = validCluesFound && !potentialPointsRemaining
 
-  solutions.forEach((board) => {
-    for (let r = 0; r < GRID_SIZE; r += 1) {
-      for (let c = 0; c < GRID_SIZE; c += 1) {
-        const cell = board[r][c]
-        if (cell === 'voltorb') {
-          stats[r][c].voltorbCount += 1
-        } else {
-          stats[r][c].sumValues += cell
+  const zeroHintSafeTiles = []
+  
+  rowClues.forEach((clue, r) => {
+    if (parseClueValue(clue.voltorbs) === 0) {
+      if (hasPointsLeft(grid[r], clue)) {
+        for (let c = 0; c < GRID_SIZE; c++) {
+          if (grid[r][c] === 'unknown') {
+            if (!zeroHintSafeTiles.some(t => t.row === r && t.col === c)) {
+               zeroHintSafeTiles.push({ row: r, col: c })
+            }
+          }
         }
       }
     }
   })
 
+  colClues.forEach((clue, c) => {
+    if (parseClueValue(clue.voltorbs) === 0) {
+      const colCells = grid.map(row => row[c])
+      if (hasPointsLeft(colCells, clue)) {
+        for (let r = 0; r < GRID_SIZE; r++) {
+          if (grid[r][c] === 'unknown') {
+            if (!zeroHintSafeTiles.some(t => t.row === r && t.col === c)) {
+              zeroHintSafeTiles.push({ row: r, col: c })
+            }
+          }
+        }
+      }
+    }
+  })
+
+  if (zeroHintSafeTiles.length > 0) {
+    return {
+      solutionCount: 'N/A',
+      stats: null,
+      recommended: zeroHintSafeTiles,
+      issues: [],
+      mode: 'certainty',
+      isLevelComplete
+    }
+  }
+
+  const hasAnyClue = [...rowClues, ...colClues].some(
+    (clue) => parseClueValue(clue.sum) !== null || parseClueValue(clue.voltorbs) !== null
+  )
+
+  if (!hasAnyClue) {
+    return {
+      solutionCount: 0,
+      stats: null,
+      recommended: [],
+      issues: ['Add at least one row or column hint to begin.'],
+      isLevelComplete: false
+    }
+  }
+
+  const rowOptions = rowClues.map((clue, rowIndex) => filterRowPatterns(grid[rowIndex], clue))
+  
+  if (rowOptions.some((options) => options.length === 0)) {
+    return {
+      solutionCount: 0,
+      stats: null,
+      recommended: [],
+      issues: ['No boards match the provided hints and revealed tiles. Check for typos.'],
+      isLevelComplete: false
+    }
+  }
+
+  const stats = Array.from({ length: GRID_SIZE }, () =>
+    Array.from({ length: GRID_SIZE }, () => ({ voltorbCount: 0, sumValues: 0 }))
+  )
+  
+  let solutionCount = 0
+  let visited = 0
+  let truncated = false
+
+  const backtrack = (rowIndex, currentBoard, colSums, colVoltorbs) => {
+      if (truncated) return
+      visited++
+      if (visited > MAX_VISITED) { truncated = true; return }
+
+      if (rowIndex === GRID_SIZE) {
+          for (let col = 0; col < GRID_SIZE; col++) {
+              const targetSum = colSumTargets[col]
+              const targetVolts = colVoltorbTargets[col]
+              if (targetSum !== null && colSums[col] !== targetSum) return
+              if (targetVolts !== null && colVoltorbs[col] !== targetVolts) return
+          }
+          solutionCount++
+          for (let r = 0; r < GRID_SIZE; r++) {
+              for (let c = 0; c < GRID_SIZE; c++) {
+                  const val = currentBoard[r][c]
+                  if (val === 'voltorb') stats[r][c].voltorbCount++
+                  else stats[r][c].sumValues += val
+              }
+          }
+          return
+      }
+
+      for (const pattern of rowOptions[rowIndex]) {
+          const nextSums = [...colSums]
+          const nextVolts = [...colVoltorbs]
+          let possible = true
+
+          for (let c = 0; c < GRID_SIZE; c++) {
+              const val = pattern.cells[c]
+              nextSums[c] += (val === 'voltorb' ? 0 : val)
+              nextVolts[c] += (val === 'voltorb' ? 1 : 0)
+              
+              if (colSumTargets[c] !== null && nextSums[c] > colSumTargets[c]) { possible = false; break; }
+              if (colVoltorbTargets[c] !== null && nextVolts[c] > colVoltorbTargets[c]) { possible = false; break; }
+          }
+
+          if (possible) {
+              const nextBoard = [...currentBoard, pattern.cells]
+              backtrack(rowIndex + 1, nextBoard, nextSums, nextVolts)
+          }
+          if (truncated) return
+      }
+  }
+
+  backtrack(0, [], Array(GRID_SIZE).fill(0), Array(GRID_SIZE).fill(0))
+
+  if (solutionCount === 0) {
+    return {
+      solutionCount,
+      stats: null,
+      recommended: [],
+      issues: ['No logic solution found. Please check your inputs for errors.'],
+      isLevelComplete: false
+    }
+  }
+
   const probabilities = stats.map((row) =>
     row.map((entry) => ({
-      voltorbProbability: entry.voltorbCount / entry.total,
-      expectedValue: entry.sumValues / entry.total,
+      voltorbProbability: entry.voltorbCount / solutionCount,
+      expectedValue: entry.sumValues / solutionCount,
     }))
   )
 
-  let minRisk = 1
+  let minRisk = 1.1
   probabilities.forEach((row, r) => {
     row.forEach((cell, c) => {
       if (grid[r][c] === 'unknown') {
-        minRisk = Math.min(minRisk, cell.voltorbProbability)
+        const risk = Math.round(cell.voltorbProbability * 10000) / 10000
+        if (risk < minRisk) minRisk = risk
       }
     })
   })
@@ -161,28 +247,78 @@ function evaluateBoards(grid, rowClues, colClues) {
   const recommended = []
   probabilities.forEach((row, r) => {
     row.forEach((cell, c) => {
-      if (grid[r][c] === 'unknown' && cell.voltorbProbability === minRisk) {
-        recommended.push({ row: r, col: c })
+      if (grid[r][c] === 'unknown') {
+         const risk = Math.round(cell.voltorbProbability * 10000) / 10000
+         if (risk === minRisk) {
+            const rowUseful = hasPointsLeft(grid[r], rowClues[r])
+            const colCells = grid.map(rw => rw[c])
+            const colUseful = hasPointsLeft(colCells, colClues[c])
+            
+            if (rowUseful || colUseful) {
+                recommended.push({ row: r, col: c })
+            }
+         }
       }
     })
   })
 
-  return { solutions, stats: probabilities, recommended, issues: [] }
+  const issues = []
+  if (truncated) {
+    issues.push('Calculation simplified due to complexity. Probabilities are approximate.')
+  }
+
+  return { solutionCount, stats: probabilities, recommended, issues, mode: 'probabilistic', isLevelComplete }
 }
 
-function Tile({ value, tone, riskLabel, evLabel, onClick }) {
+function Tile({ value, tone, riskLabel, evLabel, isOpen, onOpen, onSelect, menuPosition }) {
   return (
-    <button className={`cell ${tone}`} onClick={onClick}>
+    <div
+      className={`cell ${tone} ${isOpen ? 'is-open' : ''}`}
+      onClick={(e) => {
+        e.stopPropagation()
+        onOpen()
+      }}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpen()
+        }
+      }}
+    >
       <div className="cell-label">
         {value === 'voltorb' ? <img src="/voltorb.png" alt="Voltorb" className="voltorb-sprite" /> : value === 'unknown' ? '?' : value}
       </div>
-      {riskLabel && evLabel && (
+      
+      {value === 'unknown' && riskLabel && (
         <div className="cell-meta">
           <span>{riskLabel}</span>
-          <span>{evLabel}</span>
+          {evLabel && <span>{evLabel}</span>}
         </div>
       )}
-    </button>
+
+      {isOpen && (
+        <div
+          /* AQUI EL CAMBIO: Añadimos la clase de posición dinámica */
+          className={`cell-menu menu-${menuPosition}`}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <p className="cell-menu-title">What was here?</p>
+          <div className="cell-menu-grid">
+            <button onClick={(e) => { e.stopPropagation(); onSelect(1) }}>1</button>
+            <button onClick={(e) => { e.stopPropagation(); onSelect(2) }}>2</button>
+            <button onClick={(e) => { e.stopPropagation(); onSelect(3) }}>3</button>
+            <button className="danger" onClick={(e) => { e.stopPropagation(); onSelect('voltorb') }}>
+              <img src="/voltorbicon.png" alt="" />
+            </button>
+            <button className="ghost-btn" onClick={(e) => { e.stopPropagation(); onSelect('unknown') }}>Clear</button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -190,8 +326,17 @@ function App() {
   const [grid, setGrid] = useState(Array.from({ length: GRID_SIZE }, () => Array.from({ length: GRID_SIZE }, () => 'unknown')))
   const [rowClues, setRowClues] = useState(Array.from({ length: GRID_SIZE }, () => ({ sum: '', voltorbs: '' })))
   const [colClues, setColClues] = useState(Array.from({ length: GRID_SIZE }, () => ({ sum: '', voltorbs: '' })))
+  const [openCell, setOpenCell] = useState(null)
 
   const results = useMemo(() => evaluateBoards(grid, rowClues, colClues), [grid, rowClues, colClues])
+
+  useEffect(() => {
+    const handleKey = (e) => { if (e.key === 'Escape') setOpenCell(null) }
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('keydown', handleKey)
+    }
+  }, [])
 
   const updateClue = (setter, index, field, value) => {
     setter((prev) => {
@@ -201,29 +346,34 @@ function App() {
     })
   }
 
-  const cycleCellState = (row, col) => {
+  const setCellValue = (row, col, value) => {
     setGrid((prev) => {
       const next = prev.map((r) => r.slice())
-      next[row][col] = getNextState(prev[row][col])
+      next[row][col] = value
       return next
     })
+  }
+
+  const handleSelect = (row, col, value) => {
+    setCellValue(row, col, value)
+    setOpenCell(null)
   }
 
   const clearBoard = () => {
     setGrid(Array.from({ length: GRID_SIZE }, () => Array.from({ length: GRID_SIZE }, () => 'unknown')))
     setRowClues(Array.from({ length: GRID_SIZE }, () => ({ sum: '', voltorbs: '' })))
     setColClues(Array.from({ length: GRID_SIZE }, () => ({ sum: '', voltorbs: '' })))
+    setOpenCell(null)
   }
 
   return (
     <div className="page">
       <header className="hero">
         <div>
-          <p className="eyebrow">Voltorb Flip Assistant</p>
-          <h1>Plot your safest flips</h1>
+          <p className="eyebrow">Voltorb Flip Solver</p>
+          <h1>Find the safest flips</h1>
           <p className="lede">
-            Enter the row and column clues from your game, add any tiles you have already revealed, and we will highlight
-            the lowest-risk moves.
+            Enter clues, reveal tiles, and let the math guide you.
           </p>
         </div>
         <div className="hero-actions">
@@ -231,20 +381,26 @@ function App() {
         </div>
       </header>
 
+      {results.isLevelComplete && (
+        <div className="level-complete">
+          <h2>Level Complete!</h2>
+          <p>No more 2s or 3s left. Reset the board to start the next level.</p>
+        </div>
+      )}
+
       <main className="layout">
         <section className="panel board-panel">
           <div className="panel-header">
             <div>
-              <h2>Board and clues</h2>
-              <p className="hint">Tap a tile to cycle Unknown → 1 → 2 → 3 → Voltorb.</p>
+              <h2>Board and hints</h2>
+              <p className="hint">Tap a tile to enter result (1, 2, 3, Voltorb).</p>
             </div>
             <div className="mini-legend">
-              <span className="pill recommended-pill">Recommended</span>
-              <span className="pill risk-pill">Higher risk</span>
+              <span className="pill recommended-pill">Safe</span>
+              <span className="pill risk-pill">Risky</span>
               <span className="pill voltorb-pill"><img src="/voltorbicon.png" alt="Voltorb" /> Voltorb</span>
             </div>
           </div>
-
           <div className="board-wrapper">
             <div className="grid">
               {grid.map((row, r) => (
@@ -252,39 +408,68 @@ function App() {
                   <div className="row">
                     {row.map((value, c) => {
                       const isRecommended = results.recommended.some((item) => item.row === r && item.col === c)
+                      
                       const stats = results.stats?.[r]?.[c]
-                      const risk = stats ? Math.round(stats.voltorbProbability * 100) : null
+                      const riskProb = stats ? stats.voltorbProbability : null
                       const expected = stats ? stats.expectedValue.toFixed(2) : null
+                      const riskPercent = riskProb !== null ? Math.round(riskProb * 100) : null
 
                       let tone = 'neutral'
-                      if (value === 'voltorb') tone = 'certain'
-                      else if (isRecommended) tone = 'safe'
-                      else if (stats && stats.voltorbProbability > 0.45) tone = 'warning'
+                      let riskLabel = null
+                      
+                      if (value === 'unknown') {
+                        if (isRecommended) {
+                          tone = 'safe'
+                          riskLabel = (results.mode === 'certainty' || riskPercent === 0) ? '0% Risk' : `${riskPercent}% Risk`
+                        } else if (riskPercent !== null) {
+                            riskLabel = `${riskPercent}% Risk`
+                            if (riskPercent >= 50) tone = 'warning'
+                        }
+                      } else if (value === 'voltorb') {
+                        tone = 'certain'
+                      }
+
+                      // LOGICA DE POSICIONAMIENTO DEL MENU
+                      // Filas 0 y 1: Menú hacia abajo (bottom)
+                      // Filas 3 y 4: Menú hacia arriba (top)
+                      // Fila 2: Centrado (center)
+                      let menuPosition = 'center'
+                      if (r <= 1) menuPosition = 'bottom'
+                      if (r >= 3) menuPosition = 'top'
 
                       return (
                         <Tile
                           key={`${r}-${c}`}
                           value={value}
                           tone={tone}
-                          riskLabel={risk !== null ? `${risk}% risk` : null}
-                          evLabel={expected !== null ? `EV ${expected}` : null}
-                          onClick={() => cycleCellState(r, c)}
+                          riskLabel={riskLabel}
+                          evLabel={value === 'unknown' && expected ? `EV ${expected}` : null}
+                          isOpen={openCell?.row === r && openCell?.col === c}
+                          onOpen={() => setOpenCell({ row: r, col: c })}
+                          onSelect={(val) => handleSelect(r, c, val)}
+                          menuPosition={menuPosition}
                         />
                       )
                     })}
                     <div className="clue clue-right">
                       <input
+                        type="number"
+                        min="0"
                         aria-label={`Row ${r + 1} sum`}
                         placeholder="Sum"
                         value={rowClues[r].sum}
+                        onClick={(e) => e.stopPropagation()}
                         onChange={(e) => updateClue(setRowClues, r, 'sum', e.target.value)}
                       />
                       <div className="voltorb-clue">
                         <img src="/voltorbicon.png" alt="Voltorb count" />
                         <input
+                          type="number"
+                          min="0"
                           aria-label={`Row ${r + 1} voltorbs`}
                           placeholder="#"
                           value={rowClues[r].voltorbs}
+                          onClick={(e) => e.stopPropagation()}
                           onChange={(e) => updateClue(setRowClues, r, 'voltorbs', e.target.value)}
                         />
                       </div>
@@ -296,17 +481,23 @@ function App() {
                 {colClues.map((clue, c) => (
                   <div className="clue clue-bottom" key={c}>
                     <input
+                      type="number"
+                      min="0"
                       aria-label={`Column ${c + 1} sum`}
                       placeholder="Sum"
                       value={clue.sum}
+                      onClick={(e) => e.stopPropagation()}
                       onChange={(e) => updateClue(setColClues, c, 'sum', e.target.value)}
                     />
                     <div className="voltorb-clue">
                       <img src="/voltorbicon.png" alt="Voltorb count" />
                       <input
+                        type="number"
+                        min="0"
                         aria-label={`Column ${c + 1} voltorbs`}
                         placeholder="#"
                         value={clue.voltorbs}
+                        onClick={(e) => e.stopPropagation()}
                         onChange={(e) => updateClue(setColClues, c, 'voltorbs', e.target.value)}
                       />
                     </div>
@@ -321,37 +512,54 @@ function App() {
         <section className="panel insights">
           <div className="panel-header">
             <h2>Solver insights</h2>
-            <p className="hint">Based on all boards that fit your clues.</p>
           </div>
+          
           <div className="insight-cards">
             <div className="stat-card">
               <p className="stat-label">Valid boards</p>
-              <p className="stat-value">{results.solutions.length}</p>
-              <p className="stat-sub">Exact matches to row and column clues.</p>
+              <p className="stat-value">{results.solutionCount}</p>
             </div>
             <div className="stat-card">
-              <p className="stat-label">Safest tiles now</p>
-              <p className="stat-value">{results.recommended.length || '-'}</p>
-              <p className="stat-sub">Tiles with the lowest voltorb probability.</p>
+              <p className="stat-label">Safest tiles</p>
+              <p className="stat-value">{results.recommended.length}</p>
             </div>
           </div>
 
           {results.issues.length > 0 && (
             <div className="alert">
-              {results.issues.map((issue) => (
-                <p key={issue}>{issue}</p>
+              {results.issues.map((issue, idx) => (
+                <p key={idx}>{issue}</p>
               ))}
             </div>
           )}
 
           <div className="guide">
-            <h3>How to use</h3>
+            <h3>Strategy</h3>
+            {results.isLevelComplete ? (
+               <p className="advice highlight">
+                 <strong>Congratulations!</strong><br/>
+                 You have found all point multipliers. You can safely stop now.
+               </p>
+            ) : results.mode === 'certainty' ? (
+              <p className="advice highlight">
+                <strong>Zero-voltorb rows detected!</strong><br/>
+                Flip the highlighted green tiles. They are 100% safe.
+              </p>
+            ) : results.recommended.length > 0 ? (
+               <p className="advice">
+                 No definite safe spots. Highlighting tiles with the lowest statistical risk.
+               </p>
+            ) : (
+              <p className="advice">Enter clues to begin.</p>
+            )}
+            
+            <hr />
             <ol>
-              <li>Copy the row and column sums and voltorb counts from your current Voltorb Flip board.</li>
-              <li>Tap any tiles you have already revealed to set them as 1, 2, 3, or Voltorb.</li>
-              <li>Watch the solver highlight the lowest-risk tiles. Flip those in-game, then update the board here.</li>
+               <li>Enter row/col sums & voltorbs.</li>
+               <li>Flip highlights first.</li>
+               <li><strong>Update the board</strong> with the result (1/2/3).</li>
+               <li>Recalculate.</li>
             </ol>
-            <p className="microcopy">The solver explores every 5x5 layout that satisfies the clues, then scores each tile by voltorb probability.</p>
           </div>
         </section>
       </main>
